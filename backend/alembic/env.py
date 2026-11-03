@@ -3,6 +3,7 @@ from logging.config import fileConfig
 from alembic import context
 
 from app.database import Base, create_db_engine
+from app import models  # Register application tables with Base.metadata.
 
 config = context.config
 if config.config_file_name is not None:

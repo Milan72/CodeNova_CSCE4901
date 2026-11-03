@@ -9,7 +9,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
 class Base(DeclarativeBase):
-    """Base for future models; no domain tables are defined yet."""
+    """Shared declarative base for application models."""
 
 
 def create_db_engine() -> Engine:
