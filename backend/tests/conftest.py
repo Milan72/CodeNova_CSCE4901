@@ -112,3 +112,48 @@ def signed_token(jwt_secret):
         )
 
     return make_token
+
+
+@pytest.fixture
+def patient_payload():
+    return {
+        "first_name": "Casey",
+        "last_name": "Example",
+        "date_of_birth": "1990-01-02",
+        "contact_email": "casey.patient@example.com",
+        "phone_number": "+19405550101",
+        "address": "100 Synthetic Lane, Example City, TX 00000",
+    }
+
+
+@pytest.fixture
+def patient_factory(migrated_database, patient_payload):
+    from app.models import Patient
+    from app.patient_schemas import PatientCreate
+
+    def create_patient(**changes):
+        data = PatientCreate(**(patient_payload | changes)).model_dump()
+        patient = Patient(**data)
+        with migrated_database.SessionLocal() as session:
+            session.add(patient)
+            session.commit()
+            session.refresh(patient)
+        return patient
+
+    return create_patient
+
+
+@pytest.fixture
+def headers_for(account_factory, signed_token):
+    from app.models import Role
+
+    headers = {}
+
+    def make_headers(role="administrator"):
+        role = Role(role)
+        if role not in headers:
+            user = account_factory(f"{role.value}@example.com", role)
+            headers[role] = {"Authorization": f"Bearer {signed_token(user.id)}"}
+        return headers[role]
+
+    return make_headers

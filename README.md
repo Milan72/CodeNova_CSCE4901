@@ -36,7 +36,8 @@ Sprint 0 - Requirements Gathering
 
 The sections above preserve the initial project planning information. Milestone 1
 introduced a minimal FastAPI backend with one health endpoint. Milestone 2 added
-database infrastructure; Milestone 3 adds authentication and role-based access.
+database infrastructure; Milestone 3 added authentication and role-based access.
+Milestone 4 adds patient demographics and a restricted patient directory.
 Other application features remain planned.
 
 ### Local setup (macOS)
@@ -62,7 +63,7 @@ secret, apply migrations, and start the server:
 ```bash
 export JWT_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 python -m alembic upgrade head
-python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
 Generate the secret once per development shell and keep it private. Use the same
@@ -138,10 +139,11 @@ python -m alembic upgrade head
 python -m alembic current
 ```
 
-The initial empty baseline is revision `0001`. Milestone 3 adds revision `0002`
-for the `users` table; `current` should now show `0002 (head)`. Neither migration
-seeds accounts. Alembic uses the same engine configuration and `Base.metadata` as
-the app; schema changes are managed through migration files, not `create_all()`.
+The initial empty baseline is revision `0001`. Milestone 3 added revision `0002`
+for `users`; Milestone 4 adds revision `0003` for `patients`. `current` should now
+show `0003 (head)`. Migrations do not seed accounts or patient records. Alembic
+uses the same engine configuration and `Base.metadata` as the app; schema changes
+are managed through migration files, not `create_all()`.
 
 Run `python -m pytest -q` for all tests. Database tests use temporary SQLite files
 and cover `SELECT 1`, session cleanup, and baseline migration upgrade/downgrade.
@@ -224,3 +226,114 @@ never used by tests.
   provisioning, and application-level rate limiting are not implemented yet.
   Deactivating an account blocks its tokens; changing the signing secret invalidates
   all tokens. No clinical CRUD or frontend changes are part of this milestone.
+
+## Patient Management — Milestone 4
+
+Patient records contain demographics only and are separate from login accounts.
+No user-to-patient linking or patient self-service is implemented. Matching a
+patient's contact email to a login email does not grant access to the record.
+
+### Patient API and permissions
+
+All endpoints require `Authorization: Bearer <access_token>`.
+
+| Endpoint | Purpose | Success |
+| --- | --- | --- |
+| `POST /api/patients` | Create a patient with a server-generated UUIDv4 | 201, patient response and `Location` header |
+| `GET /api/patients` | List/search with pagination | 200, `items`, `total`, `limit`, `offset` |
+| `GET /api/patients/{patient_id}` | Retrieve a patient by UUIDv4 | 200, patient response |
+| `PATCH /api/patients/{patient_id}` | Update supplied demographic fields | 200, updated patient response |
+
+| Role | Create | List/search | Retrieve | Update |
+| --- | --- | --- | --- | --- |
+| `administrator` | Yes | Yes | Yes | Yes |
+| `clinic_staff` | Yes | Yes | Yes | Yes |
+| `physician` | No | Yes | Yes | No |
+| `patient` | No | No | No | No |
+
+Missing/invalid authentication returns 401; insufficient permissions return 403
+before patient records are looked up. A valid but absent patient ID returns 404
+for authorized callers. Invalid input returns 422. A generated identifier
+collision returns 409 without overwriting the existing patient.
+
+### Fields and validation
+
+- `first_name` and `last_name` are required, trimmed, 1–100 characters, and must
+  contain a letter. Unicode names and punctuation are supported; control
+  characters are rejected.
+- `date_of_birth` is required in `YYYY-MM-DD` format, must be a valid calendar
+  date, and cannot be later than today in UTC. Numeric timestamps are rejected.
+- `contact_email`, `phone_number`, and `address` are optional and nullable.
+  Email syntax is validated and normalized. Phone numbers use international
+  format: `+` followed by 8–15 digits, with a nonzero country-code prefix.
+  Addresses are trimmed, printable single-line strings of 1–500 characters.
+- Responses include the immutable `patient_id` and UTC `created_at`/`updated_at`
+  timestamps. IDs are randomly generated UUIDv4 values and contain no personal
+  information. Clients cannot supply or update IDs, timestamps, roles, or account
+  links.
+- PATCH preserves omitted fields. Explicit `null` clears optional contact fields;
+  names and date of birth cannot be cleared. Empty patches and unknown fields
+  are rejected. Validation failures do not partially update a record.
+
+The directory supports `q` (1–201 characters), `limit` (default 20, range 1–100),
+and `offset` (default 0, range 0–1,000,000). `q` matches a literal substring of
+the full name (`first_name last_name`) or an exact patient UUID. `%` and `_` are
+literal search characters, not wildcards. SQLite name matching is case-insensitive
+for ASCII letters; use matching case for other Unicode letters. Results are
+ordered by last name, first name, and UUID for deterministic pagination. `total`
+counts all matching records before pagination. An empty page returns `items: []`.
+
+### Synthetic request examples
+
+These fictional examples assume `ACCESS_TOKEN` contains a valid administrator or
+clinic staff token. There are no seeded development credentials; automated tests
+create their own accounts and patient records in temporary databases.
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/patients \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{
+    "first_name": "Casey",
+    "last_name": "Example",
+    "date_of_birth": "1990-01-02",
+    "contact_email": "casey.patient@example.com",
+    "phone_number": "+19405550101",
+    "address": "100 Synthetic Lane, Example City, TX 00000"
+  }'
+
+curl --get http://127.0.0.1:8000/api/patients \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  --data-urlencode "q=Casey Example" \
+  --data-urlencode "limit=20" \
+  --data-urlencode "offset=0"
+
+# Set PATIENT_ID to the patient_id returned by the creation response.
+curl "http://127.0.0.1:8000/api/patients/$PATIENT_ID" \
+  -H "Authorization: Bearer $ACCESS_TOKEN"
+
+curl -X PATCH "http://127.0.0.1:8000/api/patients/$PATIENT_ID" \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  --data '{"phone_number":"+19405550102","address":null}'
+```
+
+### Testing and privacy
+
+From `backend/`, with `.venv` activated, run `python -m pytest -q` for the complete
+suite, or `python -m pytest tests/test_patients.py tests/test_privacy.py -q` for
+patient/privacy coverage. Tests cover all four roles, creation, search, pagination,
+updates, validation, missing records, UUID collisions, safe error handling, and
+fresh migration upgrade/downgrade. Only isolated temporary SQLite databases and
+synthetic data are used; existing authentication/security/health tests remain.
+
+All patient responses, including errors, use `Cache-Control: no-store`.
+Application startup disables Uvicorn access and ASGI trace logging because URLs
+can contain patient IDs/search terms and traces can contain tokens and bodies.
+SQL parameter values are hidden and SQL engine logging stays at WARNING.
+Unexpected request failures return a generic 500 and log only a fixed message,
+without exception text, tracebacks, request data, or credentials. Validation
+errors omit submitted values. Keep request/header/body/query logging disabled in
+reverse proxies, hosting tools, and clients as well; do not enable SQL echo/debug
+or tracing that records sensitive data. Appointments, prescriptions, billing,
+clinical encounters, and frontend changes are not included.

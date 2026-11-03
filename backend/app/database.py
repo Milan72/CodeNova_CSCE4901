@@ -19,7 +19,7 @@ def create_db_engine() -> Engine:
     connect_args = (
         {"check_same_thread": False} if url.get_backend_name() == "sqlite" else {}
     )
-    return create_engine(url, connect_args=connect_args)
+    return create_engine(url, connect_args=connect_args, hide_parameters=True)
 
 
 engine = create_db_engine()

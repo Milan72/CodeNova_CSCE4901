@@ -45,16 +45,31 @@ def test_empty_baseline_migration(database):
 def test_fresh_database_migrations(database):
     config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
     command.upgrade(config, "head")
-    assert inspect(database.engine).get_table_names() == ["alembic_version", "users"]
+    assert inspect(database.engine).get_table_names() == ["alembic_version", "patients", "users"]
     with database.engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
         assert connection.scalar(text("SELECT COUNT(*) FROM users")) == 0
+        assert connection.scalar(text("SELECT COUNT(*) FROM patients")) == 0
     command.check(config)
 
+    command.downgrade(config, "0002")
+    assert inspect(database.engine).get_table_names() == ["alembic_version", "users"]
     command.downgrade(config, "0001")
     assert inspect(database.engine).get_table_names() == ["alembic_version"]
     command.upgrade(config, "head")
     command.check(config)
+
+
+def test_patient_migration_preserves_users(migrated_database, accounts):
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    command.downgrade(config, "0002")
+    with migrated_database.engine.connect() as connection:
+        assert connection.scalar(text("SELECT COUNT(*) FROM users")) == len(accounts)
+    command.upgrade(config, "head")
+    command.check(config)
+    with migrated_database.engine.connect() as connection:
+        assert connection.scalar(text("SELECT COUNT(*) FROM users")) == len(accounts)
+        assert connection.scalar(text("SELECT COUNT(*) FROM patients")) == 0
 
 
 def test_email_is_unique_without_case_sensitivity(migrated_database, accounts):

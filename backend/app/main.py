@@ -5,11 +5,14 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.auth import admin_router, router as auth_router
+from app.patients import router as patients_router
+from app.privacy import PrivateHTTPMiddleware, configure_private_logging
 from app.security import read_jwt_secret
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_private_logging()
     read_jwt_secret()
     yield
 
@@ -17,6 +20,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Code Nova - Clinical Management Software", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(admin_router)
+app.include_router(patients_router)
+app.add_middleware(PrivateHTTPMiddleware)
 
 
 @app.exception_handler(RequestValidationError)

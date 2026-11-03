@@ -1,14 +1,17 @@
-"""Authentication identities; clinical domain models are not defined here."""
+"""Authentication identities and patient demographics."""
 
-from datetime import datetime
+from datetime import date, datetime, timezone
 from enum import Enum
+from uuid import UUID, uuid4
 
 from email_validator import validate_email
 from sqlalchemy import (
     Boolean,
+    Date,
     DateTime,
     Enum as SAEnum,
     String,
+    Uuid,
     UniqueConstraint,
     func,
     true,
@@ -66,3 +69,26 @@ class User(Base):
     @validates("email")
     def validate_email_address(self, key: str, value: str) -> str:
         return normalize_email(value)
+
+
+class Patient(Base):
+    __tablename__ = "patients"
+
+    patient_id: Mapped[UUID] = mapped_column(Uuid(), primary_key=True, default=uuid4)
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
+    date_of_birth: Mapped[date] = mapped_column(Date())
+    contact_email: Mapped[str | None] = mapped_column(String(254))
+    phone_number: Mapped[str | None] = mapped_column(String(16))
+    address: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.current_timestamp(),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.current_timestamp(),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
