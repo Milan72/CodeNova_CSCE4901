@@ -1,0 +1,1 @@
+"""Code Nova backend application."""
