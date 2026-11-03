@@ -1,0 +1,2 @@
+Code Nova migrations use DATABASE_URL and Base.metadata from app.database.
+See the repository README for configuration and migration commands.
